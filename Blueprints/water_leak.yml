@@ -65,7 +65,7 @@ blueprint:
     # Notifications – Services
     mobile_notify_services:
       name: Services de notification mobile (notify.*)
-      description: Un ou plusieurs services notify (ex: notify.mobile_app_iphone, notify.family)
+      description: Un ou plusieurs services notify (ex notify.mobile_app_iphone, notify.family)
       default: []
       selector:
         text:
