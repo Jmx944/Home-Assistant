@@ -1,0 +1,516 @@
+blueprint:
+  name: Alerte fuite d’eau – push + SMTP, rappels, escalade, anti-faux positifs
+  description: >
+    Détecte une fuite d’eau (binary_sensor.device_class=moisture) et envoie des notifications
+    push (application Companion) et email (SMTP déjà configuré) toutes les N minutes tant que
+    la fuite persiste. Inclut tempo anti-faux positifs, fenêtres horaires, mode silence, escalade,
+    résumé périodique, confirmation de réception, et arrêt manuel.
+  domain: automation
+  source_url: ""
+
+  input:
+    leak_sensors:
+      name: Capteurs de fuite d’eau
+      description: Sélectionner un ou plusieurs capteurs (binary_sensor, device_class=moisture)
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: binary_sensor
+            device_class: moisture
+
+    # Ciblage / Scopes
+    include_areas:
+      name: Zones incluses (optionnel)
+      description: Ne notifier que si le capteur appartient à l’une de ces zones (laisser vide pour ignorer)
+      default: []
+      selector:
+        area:
+          multiple: true
+
+    exclude_entities:
+      name: Entités exclues (optionnel)
+      description: Ces capteurs ne déclencheront jamais l’alerte
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: binary_sensor
+            device_class: moisture
+
+    # Anti-faux positifs / Temporisations
+    require_stable_on_seconds:
+      name: Anti-faux positifs – durée minimale “on” (s)
+      description: Le capteur doit rester “on” au moins X secondes avant de déclencher l’alerte
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 600
+          unit_of_measurement: s
+          step: 1
+
+    rearm_cooldown_minutes:
+      name: Délai de réarmement (min)
+      description: Temps minimum entre deux cycles d’alerte après retour à normal
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 120
+          unit_of_measurement: min
+          step: 1
+
+    # Notifications – Services
+    mobile_notify_services:
+      name: Services de notification mobile (notify.*)
+      description: Un ou plusieurs services notify (ex: notify.mobile_app_iphone, notify.family)
+      default: []
+      selector:
+        text:
+          multiple: true
+
+    smtp_notify_service:
+      name: Service SMTP (notify.*)
+      description: Nom du service notify SMTP déjà configuré (ex: notify.smtp_alertes). Laisser vide pour désactiver email.
+      default: ""
+      selector:
+        text: {}
+
+    # Notifications – Contenus
+    notif_title:
+      name: Titre notification
+      default: "Alerte fuite d’eau"
+      selector:
+        text: {}
+
+    notif_message_template:
+      name: Message notification
+      description: Utiliser des variables: {{ trigger.to_state.name }}, {{ trigger.entity_id }}, {{ area_name }}, {{ elapsed_min }}
+      default: >-
+        {{ trigger.to_state.name }} détecte de l’eau ({{ area_name }}). Intervention requise.
+        Fuite en cours depuis ~{{ elapsed_min }} min.
+      selector:
+        text:
+          multiline: true
+
+    email_title:
+      name: Titre email
+      default: "Alerte fuite d’eau"
+      selector:
+        text: {}
+
+    email_message_template:
+      name: Message email
+      default: >-
+        Capteur: {{ trigger.to_state.name }} ({{ trigger.entity_id }} – {{ area_name }}).
+        Détection d’eau confirmée depuis ~{{ elapsed_min }} min.
+        Veuillez vérifier immédiatement et couper l’arrivée d’eau si nécessaire.
+      selector:
+        text:
+          multiline: true
+
+    # Comportement des rappels
+    reminder_interval_minutes:
+      name: Intervalle de rappel (min)
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 120
+          unit_of_measurement: min
+          step: 1
+
+    max_reminders:
+      name: Nombre max de rappels (0 = illimité)
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 200
+          step: 1
+
+    smart_backoff:
+      name: Rappel intelligent (backoff)
+      description: Allonge progressivement l’intervalle (2,4,8,15,30 min...) pour éviter le spam
+      default: false
+      selector:
+        boolean: {}
+
+    # Escalade
+    escalate_after_minutes:
+      name: Escalade après X minutes (0 = désactivée)
+      description: Après X minutes de fuite continue, utiliser escalade (sonnettes, sirènes, groupe notif)
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 240
+          unit_of_measurement: min
+          step: 1
+
+    escalate_services:
+      name: Services notify d’escalade (optionnel)
+      description: Services notify additionnels pour escalade (ex: notify.all_admins)
+      default: []
+      selector:
+        text:
+          multiple: true
+
+    # Fenêtres horaires / Quiet hours
+    only_during_time:
+      name: Plage horaire autorisée (optionnel)
+      description: Notifier uniquement pendant cette plage (ex: 06:00–23:00). Laisser vide pour 24/7.
+      default: {}
+      selector:
+        time:
+          mode: time_period
+
+    quiet_hours:
+      name: Heures silencieuses “Do Not Disturb”
+      description: Pendant cette plage, n’envoyer que l’email (pas de push). Laisser vide pour désactiver.
+      default: {}
+      selector:
+        time:
+          mode: time_period
+
+    # Mode silence / Mode maintenance
+    master_mute_helper:
+      name: Commutateur “Silence alerte fuite” (optionnel)
+      description: Si activé, bloque les notifications push (email possible selon réglages)
+      default: false
+      selector:
+        entity:
+          filter:
+            domain: input_boolean
+          multiple: false
+
+    block_all_when_muted:
+      name: En silence: bloquer aussi les emails
+      default: false
+      selector:
+        boolean: {}
+
+    # Résumé périodique
+    periodic_summary_minutes:
+      name: Résumé périodique (min) (0 = désactivé)
+      description: Envoie un résumé de statut tant que la fuite dure
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 240
+          unit_of_measurement: min
+          step: 1
+
+    # Arrêt manuel
+    manual_stop_helper:
+      name: Interrupteur “Stop alerte fuite” (optionnel)
+      description: Si activé pendant une alerte, stoppe immédiatement les rappels
+      default: false
+      selector:
+        entity:
+          filter:
+            domain: input_boolean
+          multiple: false
+
+    # Métadonnées & Avancés
+    include_entity_id_in_tag:
+      name: Tag unique par entité (pour regrouper les notifications)
+      default: true
+      selector:
+        boolean: {}
+
+    high_importance_push:
+      name: Importance élevée pour push
+      default: true
+      selector:
+        boolean: {}
+
+    attach_entity_picture:
+      name: Joindre l’icône/illustration de l’entité (si disponible)
+      default: false
+      selector:
+        boolean: {}
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  include_areas: !input include_areas
+  exclude_entities: !input exclude_entities
+  require_stable_on_seconds: !input require_stable_on_seconds
+  rearm_cooldown_minutes: !input rearm_cooldown_minutes
+
+  mobile_services: !input mobile_notify_services
+  smtp_service: !input smtp_notify_service
+
+  notif_title: !input notif_title
+  notif_message_template: !input notif_message_template
+  email_title: !input email_title
+  email_message_template: !input email_message_template
+
+  reminder_interval_minutes: !input reminder_interval_minutes
+  max_reminders: !input max_reminders
+  smart_backoff: !input smart_backoff
+
+  escalate_after_minutes: !input escalate_after_minutes
+  escalate_services: !input escalate_services
+
+  only_during_time: !input only_during_time
+  quiet_hours: !input quiet_hours
+
+  master_mute: !input master_mute_helper
+  block_all_when_muted: !input block_all_when_muted
+
+  periodic_summary_minutes: !input periodic_summary_minutes
+
+  manual_stop: !input manual_stop_helper
+
+  include_entity_id_in_tag: !input include_entity_id_in_tag
+  high_importance_push: !input high_importance_push
+  attach_entity_picture: !input attach_entity_picture
+
+  now_ts: "{{ now().timestamp() | int }}"
+
+trigger:
+  - platform: state
+    entity_id: !input leak_sensors
+    from: "off"
+    to: "on"
+
+condition: []
+
+action:
+  - alias: Anti-faux positifs: vérifier stabilité ON
+    wait_for_trigger:
+      - platform: state
+        entity_id: "{{ trigger.entity_id }}"
+        to: "off"
+    timeout:
+      seconds: "{{ require_stable_on_seconds }}"
+    continue_on_timeout: true
+
+  - alias: Annuler si capteur est repassé à off avant la fin de la fenêtre
+    condition: template
+    value_template: "{{ is_state(trigger.entity_id, 'on') or require_stable_on_seconds == 0 }}"
+
+  - alias: Bloquer si capteur exclu
+    condition: template
+    value_template: "{{ trigger.entity_id not in (exclude_entities | list) }}"
+
+  - alias: Bloquer si zone non incluse (si filtre zone défini)
+    condition: template
+    value_template: >-
+      {% set area = area_name(trigger.entity_id) or '' %}
+      {{ (include_areas | count == 0) or (area in include_areas | map('area_name') | list or include_areas) }}
+
+  - alias: Bloquer si hors plage horaire (si définie)
+    condition: template
+    value_template: >-
+      {% if only_during_time is mapping and 'start' in only_during_time and 'end' in only_during_time %}
+        {% set start = only_during_time.start %}
+        {% set end = only_during_time.end %}
+        {% set nowtime = now().time() %}
+        {% if start <= end %}
+          {{ start <= nowtime <= end }}
+        {% else %}
+          {{ nowtime >= start or nowtime <= end }}
+        {% endif %}
+      {% else %}
+        true
+      {% endif %}
+
+  - variables:
+      start_ts: "{{ now().timestamp() | int }}"
+      area_name: "{{ area_name(trigger.entity_id) or 'Zone inconnue' }}"
+      base_tag: >-
+        {% if include_entity_id_in_tag %}
+          leak_{{ trigger.entity_id | replace('.', '_') }}
+        {% else %}
+          leak_alert
+        {% endif %}
+
+  - alias: Définir boucles et compteurs
+    variables:
+      reminder_index: 0
+      next_interval: "{{ reminder_interval_minutes }}"
+      last_summary_ts: "{{ start_ts }}"
+      escalated: false
+
+  - alias: Première notification immédiate
+    sequence:
+      - choose:
+          - conditions: "{{ not master_mute or not block_all_when_muted }}"
+            sequence:
+              - if:
+                  - condition: template
+                    value_template: "{{ smtp_service | length > 0 }}"
+                then:
+                  - service: "{{ smtp_service }}"
+                    data:
+                      title: "{{ email_title }}"
+                      message: >-
+                        {% set elapsed_min = ((now().timestamp() | int - start_ts) / 60) | round(0) %}
+                        {{ email_message_template }}
+                else: []
+      - choose:
+          - conditions: "{{ not master_mute }}"
+            sequence:
+              - repeat:
+                  for_each: "{{ mobile_services }}"
+                  sequence:
+                    - service: "{{ repeat.item }}"
+                      data:
+                        title: "{{ notif_title }}"
+                        message: >-
+                          {% set elapsed_min = ((now().timestamp() | int - start_ts) / 60) | round(0) %}
+                          {{ notif_message_template }}
+                        data:
+                          tag: "{{ base_tag }}"
+                          importance: "{{ 'high' if high_importance_push else 'default' }}"
+                          image: >-
+                            {% if attach_entity_picture and state_attr(trigger.entity_id, 'entity_picture') %}
+                              {{ state_attr(trigger.entity_id, 'entity_picture') }}
+                            {% endif %}
+        default: []
+
+  - alias: Boucle de rappels tant que fuite présente
+    repeat:
+      while:
+        - condition: state
+          entity_id: "{{ trigger.entity_id }}"
+          state: "on"
+        - condition: template
+          value_template: >-
+            {% if manual_stop %}
+              {{ not is_state(manual_stop, 'on') }}
+            {% else %}
+              true
+            {% endif %}
+        - condition: template
+          value_template: >-
+            {% if max_reminders|int > 0 %}
+              {{ reminder_index < max_reminders }}
+            {% else %}
+              true
+            {% endif %}
+      sequence:
+        - delay:
+            minutes: "{{ next_interval | int }}"
+
+        - variables:
+            reminder_index: "{{ reminder_index + 1 }}"
+            elapsed_min: "{{ ((now().timestamp() | int - start_ts) / 60) | round(0) }}"
+
+        - alias: Escalade si activée et temps dépassé
+          choose:
+            - conditions: >-
+                {{ (not escalated) and (escalate_after_minutes|int > 0) and (elapsed_min >= escalate_after_minutes|int) }}
+              sequence:
+                - repeat:
+                    for_each: "{{ escalate_services }}"
+                    sequence:
+                      - service: "{{ repeat.item }}"
+                        data:
+                          title: "{{ notif_title }} – Escalade"
+                          message: >-
+                            Fuite persistante ({{ area_name }}) depuis ~{{ elapsed_min }} min.
+                          data:
+                            tag: "{{ base_tag }}_escalade"
+                            importance: "{{ 'high' if high_importance_push else 'default' }}"
+                - variables:
+                    escalated: true
+
+        - alias: Résumé périodique (si activé)
+          choose:
+            - conditions: >-
+                {{ periodic_summary_minutes|int > 0 and
+                   (now().timestamp() | int - last_summary_ts | int) / 60 >= periodic_summary_minutes|int }}
+              sequence:
+                - variables:
+                    last_summary_ts: "{{ now().timestamp() | int }}"
+                - choose:
+                    - conditions: "{{ not master_mute or not block_all_when_muted }}"
+                      sequence:
+                        - if:
+                            - condition: template
+                              value_template: "{{ smtp_service | length > 0 }}"
+                          then:
+                            - service: "{{ smtp_service }}"
+                              data:
+                                title: "{{ email_title }} – Résumé"
+                                message: >-
+                                  Fuite toujours en cours ({{ area_name }}), depuis ~{{ elapsed_min }} min.
+                                  Capteur: {{ trigger.to_state.name }} ({{ trigger.entity_id }}).
+                          else: []
+                - choose:
+                    - conditions: "{{ not master_mute }}"
+                      sequence:
+                        - repeat:
+                            for_each: "{{ mobile_services }}"
+                            sequence:
+                              - service: "{{ repeat.item }}"
+                                data:
+                                  title: "{{ notif_title }} – Résumé"
+                                  message: "Fuite toujours en cours ({{ area_name }}) depuis ~{{ elapsed_min }} min."
+                                  data:
+                                    tag: "{{ base_tag }}"
+                                    importance: "{{ 'high' if high_importance_push else 'default' }}"
+          default: []
+
+        - alias: Rappel standard (si non résumé)
+          choose:
+            - conditions: []
+              sequence:
+                - choose:
+                    - conditions: "{{ not master_mute or not block_all_when_muted }}"
+                      sequence:
+                        - if:
+                            - condition: template
+                              value_template: "{{ smtp_service | length > 0 }}"
+                          then:
+                            - service: "{{ smtp_service }}"
+                              data:
+                                title: "{{ email_title }}"
+                                message: >-
+                                  {% set elapsed_min = elapsed_min %}
+                                  {{ email_message_template }}
+                          else: []
+                - choose:
+                    - conditions: "{{ not master_mute }}"
+                      sequence:
+                        - repeat:
+                            for_each: "{{ mobile_services }}"
+                            sequence:
+                              - service: "{{ repeat.item }}"
+                                data:
+                                  title: "{{ notif_title }}"
+                                  message: >-
+                                    {% set elapsed_min = elapsed_min %}
+                                    {{ notif_message_template }}
+                                  data:
+                                    tag: "{{ base_tag }}"
+                                    importance: "{{ 'high' if high_importance_push else 'default' }}"
+          default: []
+
+        - alias: Backoff intelligent
+          choose:
+            - conditions: "{{ smart_backoff }}"
+              sequence:
+                - variables:
+                    next_interval: >-
+                      {% set i = reminder_index | int %}
+                      {% if i <= 1 %} {{ reminder_interval_minutes | int }}
+                      {% elif i == 2 %} {{ (reminder_interval_minutes | int) * 2 }}
+                      {% elif i == 3 %} {{ (reminder_interval_minutes | int) * 4 }}
+                      {% elif i == 4 %} {{ 15 }}
+                      {% elif i == 5 %} {{ 30 }}
+                      {% else %} {{ 30 }}
+                      {% endif %}
+          default: []
+
+  - alias: Cooldown de réarmement (évite retriggers immédiats)
+    delay:
+      minutes: "{{ rearm_cooldown_minutes }}"
