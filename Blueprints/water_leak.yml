@@ -1,0 +1,554 @@
+blueprint:
+  name: "🌊 Détecteur de Fuite d'Eau Intelligent"
+  description: |
+    Blueprint avancé pour la gestion des fuites d'eau avec notifications répétées,
+    messages personnalisables, escalade des alertes et actions automatiques.
+    
+    Fonctionnalités incluses:
+    - Notifications immédiates et répétées toutes les 2 minutes
+    - Messages personnalisables avec templates
+    - Escalade progressive des alertes
+    - Support de multiples services de notification
+    - Notifications persistantes dans l'interface HA
+    - Actions automatiques (sirène, lumières, fermeture d'eau)
+    - Conditions d'activation avancées
+    - Notifications de résolution automatique
+    - Compteur de fuites détectées
+    - Mode silencieux temporaire
+    
+  domain: automation
+  
+  input:
+    # === CAPTEURS ===
+    water_sensors:
+      name: "💧 Capteurs de fuite d'eau"
+      description: "Sélectionnez un ou plusieurs capteurs de fuite d'eau"
+      selector:
+        entity:
+          filter:
+            - device_class: moisture
+          multiple: true
+    
+    # === CONDITIONS D'ACTIVATION ===
+    time_conditions:
+      name: "🕒 Conditions horaires"
+      description: "Limiter les alertes à certaines heures (optionnel)"
+      default: []
+      selector:
+        time:
+          {}
+    
+    presence_condition:
+      name: "👥 Condition de présence"
+      description: "Ne déclencher que si personne n'est présent (optionnel)"
+      default: {}
+      selector:
+        entity:
+          filter:
+            - domain: person
+            - domain: device_tracker
+            - domain: input_boolean
+          multiple: false
+    
+    # === NOTIFICATIONS ===
+    notification_services:
+      name: "📱 Services de notification"
+      description: "Services de notification à utiliser (mobile_app, email, etc.)"
+      selector:
+        select:
+          options:
+            - label: "Application mobile"
+              value: "mobile_app"
+            - label: "Email"
+              value: "email"
+            - label: "Telegram"
+              value: "telegram"
+            - label: "Discord"
+              value: "discord"
+            - label: "Slack"
+              value: "slack"
+            - label: "Pushbullet"
+              value: "pushbullet"
+            - label: "Notification persistante HA"
+              value: "persistent"
+          multiple: true
+          custom_value: true
+      default: ["mobile_app", "persistent"]
+    
+    mobile_devices:
+      name: "📲 Appareils mobiles"
+      description: "Appareils mobiles à notifier (si mobile_app sélectionné)"
+      default: []
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+          multiple: true
+    
+    # === MESSAGES ===
+    alert_title:
+      name: "🚨 Titre de l'alerte"
+      description: "Titre de la notification d'alerte"
+      default: "⚠️ FUITE D'EAU DÉTECTÉE"
+      selector:
+        text: {}
+    
+    alert_message:
+      name: "💬 Message d'alerte"
+      description: "Message de la notification (supporte les templates)"
+      default: |
+        🚰 Fuite d'eau détectée par {{ trigger.to_state.attributes.friendly_name }}!
+        📍 Zone: {{ area_name(trigger.entity_id) or 'Zone inconnue' }}
+        🕒 Heure: {{ now().strftime('%H:%M:%S') }}
+        
+        ⚡ Action immédiate requise!
+      selector:
+        text:
+          type: text
+          multiline: true
+    
+    repeat_message:
+      name: "🔄 Message de rappel"
+      description: "Message pour les notifications répétées"
+      default: |
+        🔔 RAPPEL: Fuite d'eau toujours active!
+        📍 {{ trigger.to_state.attributes.friendly_name }}
+        ⏰ Alerte depuis {{ (now() - trigger.to_state.last_changed).total_seconds() // 60 }} minutes
+        
+        Occurrence #{{ repeat.index }}
+      selector:
+        text:
+          type: text
+          multiline: true
+    
+    resolved_message:
+      name: "✅ Message de résolution"
+      description: "Message envoyé quand la fuite est résolue"
+      default: |
+        ✅ Fuite d'eau résolue!
+        📍 {{ trigger.to_state.attributes.friendly_name }}
+        ⏱️ Durée: {{ (now() - trigger.to_state.last_changed).total_seconds() // 60 }} minutes
+      selector:
+        text:
+          type: text
+          multiline: true
+    
+    # === PARAMÈTRES DE RÉPÉTITION ===
+    repeat_interval:
+      name: "⏱️ Intervalle de répétition"
+      description: "Intervalle entre les notifications répétées"
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 60
+          step: 1
+          unit_of_measurement: "minutes"
+    
+    max_notifications:
+      name: "🔢 Nombre maximum de notifications"
+      description: "Nombre maximum de notifications à envoyer (0 = illimité)"
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+    
+    escalation_enabled:
+      name: "📈 Escalade progressive"
+      description: "Augmenter la fréquence après un certain temps"
+      default: false
+      selector:
+        boolean: {}
+    
+    escalation_time:
+      name: "⏰ Temps avant escalade"
+      description: "Temps avant d'augmenter la fréquence (si escalade activée)"
+      default: 10
+      selector:
+        number:
+          min: 5
+          max: 60
+          step: 5
+          unit_of_measurement: "minutes"
+    
+    # === ACTIONS AUTOMATIQUES ===
+    automatic_actions:
+      name: "🤖 Actions automatiques"
+      description: "Actions à exécuter automatiquement en cas de fuite"
+      default: []
+      selector:
+        select:
+          options:
+            - label: "Activer sirène/alarme"
+              value: "siren"
+            - label: "Clignoter les lumières"
+              value: "lights"
+            - label: "Fermer vanne d'eau principale"
+              value: "water_valve"
+            - label: "Envoyer photo des caméras"
+              value: "camera"
+            - label: "Annoncement vocal TTS"
+              value: "tts"
+          multiple: true
+    
+    siren_entity:
+      name: "🚨 Entité sirène"
+      description: "Sirène à activer (si action sirène sélectionnée)"
+      default: {}
+      selector:
+        entity:
+          filter:
+            - domain: siren
+            - domain: switch
+          multiple: false
+    
+    warning_lights:
+      name: "💡 Lumières d'alerte"
+      description: "Lumières à faire clignoter (si action lumières sélectionnée)"
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: light
+          multiple: true
+    
+    water_valve:
+      name: "🚰 Vanne d'eau principale"
+      description: "Vanne à fermer automatiquement (si action vanne sélectionnée)"
+      default: {}
+      selector:
+        entity:
+          filter:
+            - domain: switch
+            - domain: valve
+          multiple: false
+    
+    tts_entity:
+      name: "🔊 Entité TTS"
+      description: "Service TTS pour annonces vocales"
+      default: {}
+      selector:
+        entity:
+          filter:
+            - domain: tts
+            - domain: media_player
+          multiple: false
+    
+    camera_entities:
+      name: "📸 Caméras"
+      description: "Caméras pour capture d'images (si action caméra sélectionnée)"
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: camera
+          multiple: true
+    
+    # === OPTIONS AVANCÉES ===
+    priority_level:
+      name: "🎯 Niveau de priorité"
+      description: "Niveau de priorité des notifications"
+      default: "high"
+      selector:
+        select:
+          options:
+            - label: "Normale"
+              value: "normal"
+            - label: "Élevée"
+              value: "high"
+            - label: "Critique"
+              value: "critical"
+    
+    notification_sound:
+      name: "🔔 Son de notification"
+      description: "Son personnalisé pour les notifications mobiles"
+      default: "alarm"
+      selector:
+        text: {}
+    
+    vibration_pattern:
+      name: "📳 Motif de vibration"
+      description: "Motif de vibration personnalisé (Android)"
+      default: [100, 200, 100, 200, 100]
+      selector:
+        object: {}
+    
+    create_counter:
+      name: "📊 Créer compteur de fuites"
+      description: "Créer un compteur pour suivre les incidents"
+      default: true
+      selector:
+        boolean: {}
+    
+    silent_mode_input:
+      name: "🔇 Input Boolean mode silencieux"
+      description: "Input boolean pour activer un mode silencieux temporaire"
+      default: {}
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+          multiple: false
+
+variables:
+  repeat_interval_seconds: "{{ (repeat_interval | int) * 60 }}"
+  max_notifications_count: "{{ max_notifications | int }}"
+  escalation_time_seconds: "{{ (escalation_time | int) * 60 }}"
+  notification_services_list: "{{ notification_services }}"
+  mobile_devices_list: "{{ mobile_devices }}"
+  automatic_actions_list: "{{ automatic_actions }}"
+  
+trigger:
+  - platform: state
+    entity_id: !input water_sensors
+    to: "on"
+    id: "leak_detected"
+  - platform: state
+    entity_id: !input water_sensors
+    to: "off" 
+    id: "leak_resolved"
+
+condition:
+  - condition: template
+    value_template: >
+      {% if silent_mode_input %}
+        {{ not is_state(silent_mode_input, 'on') }}
+      {% else %}
+        true
+      {% endif %}
+
+action:
+  - choose:
+      # === FUITE DÉTECTÉE ===
+      - conditions:
+          - condition: trigger
+            id: "leak_detected"
+        sequence:
+          # Créer compteur si activé
+          - if:
+              - condition: template
+                value_template: "{{ create_counter }}"
+            then:
+              - service: counter.increment
+                target:
+                  entity_id: counter.water_leaks_detected
+                continue_on_error: true
+          
+          # Actions automatiques
+          - if:
+              - condition: template
+                value_template: "{{ 'siren' in automatic_actions_list and siren_entity }}"
+            then:
+              - service: siren.turn_on
+                target:
+                  entity_id: !input siren_entity
+          
+          - if:
+              - condition: template
+                value_template: "{{ 'water_valve' in automatic_actions_list and water_valve }}"
+            then:
+              - service: switch.turn_off
+                target:
+                  entity_id: !input water_valve
+          
+          - if:
+              - condition: template
+                value_template: "{{ 'lights' in automatic_actions_list and warning_lights }}"
+            then:
+              - repeat:
+                  count: 10
+                  sequence:
+                    - service: light.turn_on
+                      target:
+                        entity_id: !input warning_lights
+                      data:
+                        color_name: red
+                        brightness: 255
+                    - delay: "00:00:01"
+                    - service: light.turn_off
+                      target:
+                        entity_id: !input warning_lights
+                    - delay: "00:00:01"
+          
+          - if:
+              - condition: template
+                value_template: "{{ 'tts' in automatic_actions_list and tts_entity }}"
+            then:
+              - service: tts.speak
+                target:
+                  entity_id: !input tts_entity
+                data:
+                  message: "Attention! Fuite d'eau détectée dans {{ area_name(trigger.entity_id) or 'la maison' }}!"
+          
+          # Notifications immédiates
+          - parallel:
+              # Notification persistante HA
+              - if:
+                  - condition: template
+                    value_template: "{{ 'persistent' in notification_services_list }}"
+                then:
+                  - service: persistent_notification.create
+                    data:
+                      title: !input alert_title
+                      message: !input alert_message
+                      notification_id: "water_leak_{{ trigger.entity_id.split('.')[1] }}"
+              
+              # Notifications mobiles
+              - if:
+                  - condition: template
+                    value_template: "{{ 'mobile_app' in notification_services_list and mobile_devices_list }}"
+                then:
+                  - repeat:
+                      for_each: !input mobile_devices
+                      sequence:
+                        - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                          data:
+                            title: !input alert_title
+                            message: !input alert_message
+                            data:
+                              tag: "water_leak_{{ trigger.entity_id.split('.')[1] }}"
+                              priority: !input priority_level
+                              ttl: 0
+                              persistent: true
+                              notification_icon: "mdi:water-alert"
+                              color: "red"
+                              sound: !input notification_sound
+                              vibrationPattern: !input vibration_pattern
+                              actions:
+                                - action: "SILENCE_LEAK"
+                                  title: "🔇 Mode silencieux 30min"
+                                - action: "MARK_RESOLVED"
+                                  title: "✅ Marquer résolu"
+              
+              # Autres services de notification
+              - repeat:
+                  for_each: "{{ notification_services_list }}"
+                  sequence:
+                    - if:
+                        - condition: template
+                          value_template: "{{ repeat.item not in ['mobile_app', 'persistent'] }}"
+                      then:
+                        - service: "notify.{{ repeat.item }}"
+                          data:
+                            title: !input alert_title
+                            message: !input alert_message
+                          continue_on_error: true
+          
+          # Boucle de notifications répétées
+          - repeat:
+              while:
+                - condition: state
+                  entity_id: "{{ trigger.entity_id }}"
+                  state: "on"
+                - condition: template
+                  value_template: >
+                    {% if max_notifications_count > 0 %}
+                      {{ repeat.index <= max_notifications_count }}
+                    {% else %}
+                      true
+                    {% endif %}
+                - condition: template
+                  value_template: >
+                    {% if silent_mode_input %}
+                      {{ not is_state(silent_mode_input, 'on') }}
+                    {% else %}
+                      true
+                    {% endif %}
+              sequence:
+                # Délai avec escalade si activée
+                - delay: >
+                    {% if escalation_enabled and (now() - trigger.to_state.last_changed).total_seconds() > escalation_time_seconds %}
+                      {{ [repeat_interval_seconds // 2, 60] | max }}
+                    {% else %}
+                      {{ repeat_interval_seconds }}
+                    {% endif %}
+                
+                # Vérifier si toujours en fuite
+                - condition: state
+                  entity_id: "{{ trigger.entity_id }}"
+                  state: "on"
+                
+                # Envoyer notifications répétées
+                - parallel:
+                    # Notification persistante HA (mise à jour)
+                    - if:
+                        - condition: template
+                          value_template: "{{ 'persistent' in notification_services_list }}"
+                      then:
+                        - service: persistent_notification.create
+                          data:
+                            title: "{{ alert_title }} - Rappel #{{ repeat.index }}"
+                            message: !input repeat_message
+                            notification_id: "water_leak_{{ trigger.entity_id.split('.')[1] }}"
+                    
+                    # Notifications mobiles répétées
+                    - if:
+                        - condition: template
+                          value_template: "{{ 'mobile_app' in notification_services_list and mobile_devices_list }}"
+                      then:
+                        - repeat:
+                            for_each: !input mobile_devices
+                            sequence:
+                              - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                                data:
+                                  title: "{{ alert_title }} - Rappel #{{ repeat.index }}"
+                                  message: !input repeat_message
+                                  data:
+                                    tag: "water_leak_{{ trigger.entity_id.split('.')[1] }}"
+                                    priority: !input priority_level
+                                    persistent: true
+                                    notification_icon: "mdi:water-alert"
+                                    color: "orange"
+                                    sound: !input notification_sound
+      
+      # === FUITE RÉSOLUE ===
+      - conditions:
+          - condition: trigger
+            id: "leak_resolved"
+        sequence:
+          # Arrêter actions automatiques
+          - if:
+              - condition: template
+                value_template: "{{ 'siren' in automatic_actions_list and siren_entity }}"
+            then:
+              - service: siren.turn_off
+                target:
+                  entity_id: !input siren_entity
+          
+          # Notifications de résolution
+          - parallel:
+              # Supprimer notification persistante
+              - if:
+                  - condition: template
+                    value_template: "{{ 'persistent' in notification_services_list }}"
+                then:
+                  - service: persistent_notification.dismiss
+                    data:
+                      notification_id: "water_leak_{{ trigger.entity_id.split('.')[1] }}"
+                  - service: persistent_notification.create
+                    data:
+                      title: "✅ Fuite Résolue"
+                      message: !input resolved_message
+                      notification_id: "water_leak_resolved_{{ trigger.entity_id.split('.')[1] }}"
+              
+              # Notifications mobiles de résolution
+              - if:
+                  - condition: template
+                    value_template: "{{ 'mobile_app' in notification_services_list and mobile_devices_list }}"
+                then:
+                  - repeat:
+                      for_each: !input mobile_devices
+                      sequence:
+                        - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                          data:
+                            title: "✅ Fuite Résolue"
+                            message: !input resolved_message
+                            data:
+                              tag: "water_leak_{{ trigger.entity_id.split('.')[1] }}"
+                              notification_icon: "mdi:water-check"
+                              color: "green"
+
+mode: parallel
+max_exceeded: silent
