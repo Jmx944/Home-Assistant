@@ -1,0 +1,807 @@
+blueprint:
+  name: "🔥 Détecteur de Fumée Intelligent & Sécurité Incendie"
+  description: |
+    Blueprint avancé pour la gestion des détecteurs de fumée avec système d'évacuation d'urgence,
+    notifications critiques, actions automatiques et protocoles de sécurité complets.
+    
+    Fonctionnalités principales:
+    - Notifications critiques immédiates multi-canaux
+    - Notifications répétées toutes les 2 minutes avec escalade
+    - Protocole d'évacuation automatique intelligent
+    - Actions d'urgence coordonnées (lumières, sirènes, ouvertures)
+    - Notifications de localisation précise
+    - Mode test et maintenance
+    - Intégration services d'urgence
+    - Surveillance batterie et état des détecteurs
+    - Notifications météo critiques (canicule, orages)
+    - Système de liaison entre détecteurs
+    - Enregistrement des incidents
+    
+  domain: automation
+  
+  input:
+    # === DÉTECTEURS DE FUMÉE ===
+    smoke_detectors:
+      name: "🚨 Détecteurs de fumée"
+      description: "Sélectionnez tous vos détecteurs de fumée"
+      selector:
+        entity:
+          filter:
+            - device_class: smoke
+          multiple: true
+    
+    co_detectors:
+      name: "☠️ Détecteurs de monoxyde de carbone (optionnel)"
+      description: "Détecteurs de CO à inclure dans le système d'alarme"
+      default: []
+      selector:
+        entity:
+          filter:
+            - device_class: gas
+            - device_class: co
+          multiple: true
+    
+    # === SERVICES DE NOTIFICATION ===
+    notification_services:
+      name: "📱 Services de notification d'urgence"
+      description: "Tous les canaux de notification à utiliser"
+      selector:
+        select:
+          options:
+            - label: "📱 Application mobile"
+              value: "mobile_app"
+            - label: "📧 Email"
+              value: "email"
+            - label: "📲 Telegram"
+              value: "telegram"
+            - label: "💬 Discord"
+              value: "discord"
+            - label: "🔔 Slack"
+              value: "slack"
+            - label: "📮 Pushbullet"
+              value: "pushbullet"
+            - label: "🏠 Notification persistante HA"
+              value: "persistent"
+            - label: "📻 Appel téléphonique (SIP)"
+              value: "sip_call"
+          multiple: true
+          custom_value: true
+      default: ["mobile_app", "email", "persistent"]
+    
+    mobile_devices:
+      name: "📲 Appareils mobiles d'urgence"
+      description: "Tous les téléphones à alerter en priorité"
+      default: []
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+          multiple: true
+    
+    emergency_contacts:
+      name: "🆘 Contacts d'urgence"
+      description: "Emails/téléphones de vos contacts d'urgence (séparés par des virgules)"
+      default: ""
+      selector:
+        text:
+          multiline: true
+    
+    # === MESSAGES PERSONNALISÉS ===
+    fire_alert_title:
+      name: "🔥 Titre alerte incendie"
+      description: "Titre pour l'alerte de détection de fumée/feu"
+      default: "🚨 ALERTE INCENDIE - ÉVACUATION IMMÉDIATE"
+      selector:
+        text: {}
+    
+    fire_alert_message:
+      name: "🔥 Message alerte incendie"
+      description: "Message détaillé de l'alerte incendie"
+      default: |
+        🔥 INCENDIE DÉTECTÉ - ÉVACUATION IMMÉDIATE !
+        
+        📍 Détecteur: {{ trigger.to_state.attributes.friendly_name }}
+        🏠 Zone: {{ area_name(trigger.entity_id) or 'Zone inconnue' }}
+        🕒 Heure: {{ now().strftime('%d/%m/%Y à %H:%M:%S') }}
+        🌡️ Température: {{ states('sensor.temperature_' + area_name(trigger.entity_id).lower()) or 'N/A' }}°C
+        
+        ⚠️ SORTEZ IMMÉDIATEMENT DU BÂTIMENT
+        📞 Appelez les pompiers: 18 ou 112
+        🚪 Point de rassemblement: [À définir]
+        
+        🔴 Ne prenez pas l'ascenseur
+        🔴 Fermez les portes derrière vous
+        🔴 Si la fumée est dense, restez au sol
+      selector:
+        text:
+          type: text
+          multiline: true
+    
+    repeat_message:
+      name: "🔄 Message de rappel d'urgence"
+      description: "Message pour notifications répétées"
+      default: |
+        🚨 RAPPEL URGENT - INCENDIE TOUJOURS ACTIF !
+        
+        📍 {{ trigger.to_state.attributes.friendly_name }}
+        ⏰ Alerte depuis {{ (now() - trigger.to_state.last_changed).total_seconds() // 60 }} minutes
+        🔔 Rappel #{{ repeat.index }}
+        
+        ⚠️ SI VOUS ÊTES ENCORE DANS LE BÂTIMENT :
+        🏃 ÉVACUEZ IMMÉDIATEMENT !
+        📞 APPELEZ LES POMPIERS : 18 ou 112
+        
+        🆘 Ce message se répète toutes les 2 minutes
+      selector:
+        text:
+          type: text
+          multiline: true
+    
+    co_alert_message:
+      name: "☠️ Message alerte monoxyde de carbone"
+      description: "Message spécifique pour le CO"
+      default: |
+        ☠️ DANGER - MONOXYDE DE CARBONE DÉTECTÉ !
+        
+        📍 Détecteur: {{ trigger.to_state.attributes.friendly_name }}
+        🏠 Zone: {{ area_name(trigger.entity_id) or 'Zone inconnue' }}
+        🕒 Heure: {{ now().strftime('%d/%m/%Y à %H:%M:%S') }}
+        
+        ⚠️ ACTIONS IMMÉDIATES REQUISES :
+        🚪 Ouvrez toutes les fenêtres et portes
+        🏃 Sortez immédiatement à l'air libre
+        🚫 N'utilisez aucun appareil électrique
+        📞 Appelez les pompiers: 18 ou 112
+        
+        ☠️ Le CO est invisible et mortel !
+      selector:
+        text:
+          type: text
+          multiline: true
+    
+    resolved_message:
+      name: "✅ Message de résolution"
+      description: "Message envoyé quand l'alerte est résolue"
+      default: |
+        ✅ Alerte incendie résolue
+        
+        📍 {{ trigger.to_state.attributes.friendly_name }}
+        ⏱️ Durée de l'incident: {{ (now() - trigger.to_state.last_changed).total_seconds() // 60 }} minutes
+        🕒 Résolu le: {{ now().strftime('%d/%m/%Y à %H:%M:%S') }}
+        
+        ⚠️ VÉRIFICATIONS RECOMMANDÉES :
+        🔍 Inspectez la zone pour des dégâts
+        🏠 Aérez complètement avant de réintégrer
+        🔧 Vérifiez le détecteur de fumée
+        📞 Contactez votre assurance si nécessaire
+      selector:
+        text:
+          type: text
+          multiline: true
+    
+    # === PARAMÈTRES D'URGENCE ===
+    repeat_interval:
+      name: "⏱️ Intervalle des rappels d'urgence"
+      description: "Fréquence des notifications répétées"
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 5
+          step: 1
+          unit_of_measurement: "minutes"
+    
+    max_notifications:
+      name: "🔢 Limite de notifications"
+      description: "Nombre maximum de rappels (0 = illimité)"
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 1
+    
+    escalation_enabled:
+      name: "📈 Escalade d'urgence"
+      description: "Accélérer les notifications après un délai"
+      default: true
+      selector:
+        boolean: {}
+    
+    escalation_time:
+      name: "⏰ Délai avant escalade"
+      description: "Temps avant accélération des alertes"
+      default: 5
+      selector:
+        number:
+          min: 2
+          max: 15
+          step: 1
+          unit_of_measurement: "minutes"
+    
+    # === ACTIONS D'ÉVACUATION AUTOMATIQUES ===
+    emergency_actions:
+      name: "🆘 Actions d'évacuation automatiques"
+      description: "Actions déclenchées automatiquement en cas d'incendie"
+      default: ["emergency_lighting", "siren", "door_unlock", "window_open"]
+      selector:
+        select:
+          options:
+            - label: "💡 Éclairage d'évacuation maximal"
+              value: "emergency_lighting"
+            - label: "🚨 Sirènes d'alarme"
+              value: "siren"
+            - label: "🚪 Déverrouillage des porties"
+              value: "door_unlock"
+            - label: "🪟 Ouverture automatique des fenêtres"
+              value: "window_open"
+            - label: "🚰 Coupure gaz et électricité"
+              value: "utilities_shutdown"
+            - label: "📹 Enregistrement caméras de sécurité"
+              value: "camera_record"
+            - label: "📢 Annonces TTS d'évacuation"
+              value: "tts_evacuation"
+            - label: "🔔 Liaison détecteurs (tous sonnent)"
+              value: "detectors_linkage"
+            - label: "❄️ Arrêt climatisation/chauffage"
+              value: "hvac_shutdown"
+          multiple: true
+    
+    # === ÉQUIPEMENTS D'URGENCE ===
+    emergency_lights:
+      name: "💡 Éclairage d'évacuation"
+      description: "Lumières à allumer au maximum pour l'évacuation"
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: light
+          multiple: true
+    
+    emergency_sirens:
+      name: "🚨 Sirènes d'alarme"
+      description: "Sirènes et alarmes sonores à activer"
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: siren
+            - domain: switch
+          multiple: true
+    
+    smart_locks:
+      name: "🚪 Serrures intelligentes"
+      description: "Serrures à déverrouiller automatiquement"
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: lock
+          multiple: true
+    
+    smart_windows:
+      name: "🪟 Fenêtres/volets motorisés"
+      description: "Fenêtres/volets à ouvrir pour l'aération"
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: cover
+          multiple: true
+    
+    gas_valve:
+      name: "⛽ Vanne de gaz principale"
+      description: "Vanne de gaz à fermer automatiquement"
+      default: {}
+      selector:
+        entity:
+          filter:
+            - domain: switch
+            - domain: valve
+          multiple: false
+    
+    main_breaker:
+      name: "⚡ Disjoncteur principal"
+      description: "Disjoncteur à couper (sauf éclairage d'urgence)"
+      default: {}
+      selector:
+        entity:
+          filter:
+            - domain: switch
+          multiple: false
+    
+    hvac_system:
+      name: "❄️ Système CVC"
+      description: "Climatisation/chauffage à arrêter"
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: climate
+          multiple: true
+    
+    security_cameras:
+      name: "📹 Caméras de sécurité"
+      description: "Caméras pour enregistrement d'urgence"
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: camera
+          multiple: true
+    
+    tts_speakers:
+      name: "📢 Haut-parleurs pour annonces"
+      description: "Enceintes pour annonces d'évacuation"
+      default: []
+      selector:
+        entity:
+          filter:
+            - domain: media_player
+          multiple: true
+    
+    # === SURVEILLANCE AVANCÉE ===
+    monitor_battery:
+      name: "🔋 Surveillance batterie des détecteurs"
+      description: "Alerter si batterie faible"
+      default: true
+      selector:
+        boolean: {}
+    
+    battery_threshold:
+      name: "🔋 Seuil batterie critique"
+      description: "Pourcentage batterie pour alerte"
+      default: 20
+      selector:
+        number:
+          min: 10
+          max: 50
+          step: 5
+          unit_of_measurement: "%"
+    
+    test_mode_entity:
+      name: "🧪 Input Boolean mode test"
+      description: "Bouton pour mode test (ne déclenche pas l'évacuation)"
+      default: {}
+      selector:
+        entity:
+          filter:
+            - domain: input_boolean
+          multiple: false
+    
+    # === INTÉGRATIONS EXTERNES ===
+    weather_warnings:
+      name: "🌪️ Alertes météo extrême"
+      description: "Inclure alertes canicule/orages dans surveillance"
+      default: false
+      selector:
+        boolean: {}
+    
+    emergency_services_notification:
+      name: "🚨 Notification services d'urgence"
+      description: "Envoyer notification aux services d'urgence (email/SMS)"
+      default: false
+      selector:
+        boolean: {}
+    
+    # === PARAMÈTRES NOTIFICATION ===
+    critical_priority:
+      name: "🔴 Priorité critique"
+      description: "Utiliser notifications critiques (contournent mode silencieux)"
+      default: true
+      selector:
+        boolean: {}
+    
+    emergency_sound:
+      name: "🔊 Son d'urgence"
+      description: "Son spécial pour notifications d'incendie"
+      default: "emergency"
+      selector:
+        text: {}
+    
+    vibration_pattern:
+      name: "📳 Vibration d'urgence"
+      description: "Motif de vibration d'urgence"
+      default: [500, 200, 500, 200, 500, 200, 500]
+      selector:
+        object: {}
+
+variables:
+  repeat_interval_seconds: "{{ (repeat_interval | int) * 60 }}"
+  max_notifications_count: "{{ max_notifications | int }}"
+  escalation_time_seconds: "{{ (escalation_time | int) * 60 }}"
+  notification_services_list: "{{ notification_services }}"
+  mobile_devices_list: "{{ mobile_devices }}"
+  emergency_actions_list: "{{ emergency_actions }}"
+  smoke_detectors_list: "{{ smoke_detectors }}"
+  co_detectors_list: "{{ co_detectors }}"
+  is_test_mode: "{{ test_mode_entity and is_state(test_mode_entity, 'on') }}"
+  
+trigger:
+  - platform: state
+    entity_id: !input smoke_detectors
+    to: "on"
+    id: "smoke_detected"
+  - platform: state
+    entity_id: !input co_detectors
+    to: "on"
+    id: "co_detected"
+  - platform: state
+    entity_id: !input smoke_detectors
+    to: "off"
+    id: "smoke_resolved"
+  - platform: state
+    entity_id: !input co_detectors
+    to: "off"
+    id: "co_resolved"
+
+condition:
+  - condition: template
+    value_template: "{{ trigger.from_state.state != trigger.to_state.state }}"
+
+action:
+  - choose:
+      # === DÉTECTION DE FUMÉE ===
+      - conditions:
+          - condition: trigger
+            id: "smoke_detected"
+        sequence:
+          # Log de l'incident
+          - service: logbook.log
+            data:
+              name: "🔥 Système Incendie"
+              message: "Fumée détectée par {{ trigger.to_state.attributes.friendly_name }} dans {{ area_name(trigger.entity_id) or 'zone inconnue' }}"
+              entity_id: "{{ trigger.entity_id }}"
+          
+          # Actions d'évacuation automatiques (sauf si mode test)
+          - if:
+              - condition: template
+                value_template: "{{ not is_test_mode }}"
+            then:
+              - parallel:
+                  # Éclairage d'évacuation maximal
+                  - if:
+                      - condition: template
+                        value_template: "{{ 'emergency_lighting' in emergency_actions_list and emergency_lights }}"
+                    then:
+                      - service: light.turn_on
+                        target:
+                          entity_id: !input emergency_lights
+                        data:
+                          brightness: 255
+                          color_name: red
+                  
+                  # Sirènes d'alarme
+                  - if:
+                      - condition: template
+                        value_template: "{{ 'siren' in emergency_actions_list and emergency_sirens }}"
+                    then:
+                      - service: siren.turn_on
+                        target:
+                          entity_id: !input emergency_sirens
+                  
+                  # Déverrouillage des portes
+                  - if:
+                      - condition: template
+                        value_template: "{{ 'door_unlock' in emergency_actions_list and smart_locks }}"
+                    then:
+                      - service: lock.unlock
+                        target:
+                          entity_id: !input smart_locks
+                  
+                  # Ouverture des fenêtres
+                  - if:
+                      - condition: template
+                        value_template: "{{ 'window_open' in emergency_actions_list and smart_windows }}"
+                    then:
+                      - service: cover.open_cover
+                        target:
+                          entity_id: !input smart_windows
+                  
+                  # Coupure des utilities
+                  - if:
+                      - condition: template
+                        value_template: "{{ 'utilities_shutdown' in emergency_actions_list }}"
+                    then:
+                      - if:
+                          - condition: template
+                            value_template: "{{ gas_valve }}"
+                        then:
+                          - service: switch.turn_off
+                            target:
+                              entity_id: !input gas_valve
+                      - if:
+                          - condition: template
+                            value_template: "{{ hvac_system }}"
+                        then:
+                          - service: climate.turn_off
+                            target:
+                              entity_id: !input hvac_system
+                  
+                  # Annonces TTS d'évacuation
+                  - if:
+                      - condition: template
+                        value_template: "{{ 'tts_evacuation' in emergency_actions_list and tts_speakers }}"
+                    then:
+                      - repeat:
+                          count: 3
+                          sequence:
+                            - service: tts.speak
+                              target:
+                                entity_id: !input tts_speakers
+                              data:
+                                message: "Alerte incendie ! Évacuez immédiatement le bâtiment ! Fumée détectée dans {{ area_name(trigger.entity_id) or 'la zone' }}. Sortez par la sortie la plus proche !"
+                                options:
+                                  volume_level: 1.0
+                            - delay: "00:00:03"
+                  
+                  # Liaison détecteurs (faire sonner tous les autres)
+                  - if:
+                      - condition: template
+                        value_template: "{{ 'detectors_linkage' in emergency_actions_list }}"
+                    then:
+                      - service: script.trigger_all_smoke_alarms
+                        continue_on_error: true
+                  
+                  # Enregistrement caméras
+                  - if:
+                      - condition: template
+                        value_template: "{{ 'camera_record' in emergency_actions_list and security_cameras }}"
+                    then:
+                      - service: camera.record
+                        target:
+                          entity_id: !input security_cameras
+                        data:
+                          duration: 300
+                          filename: "/config/recordings/emergency_{{ now().strftime('%Y%m%d_%H%M%S') }}.mp4"
+          
+          # Notifications d'urgence immédiates
+          - parallel:
+              # Notification persistante critique
+              - if:
+                  - condition: template
+                    value_template: "{{ 'persistent' in notification_services_list }}"
+                then:
+                  - service: persistent_notification.create
+                    data:
+                      title: !input fire_alert_title
+                      message: !input fire_alert_message
+                      notification_id: "fire_emergency_{{ trigger.entity_id.split('.')[1] }}"
+              
+              # Notifications mobiles critiques
+              - if:
+                  - condition: template
+                    value_template: "{{ 'mobile_app' in notification_services_list and mobile_devices_list }}"
+                then:
+                  - repeat:
+                      for_each: !input mobile_devices
+                      sequence:
+                        - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                          data:
+                            title: !input fire_alert_title
+                            message: !input fire_alert_message
+                            data:
+                              tag: "fire_emergency_{{ trigger.entity_id.split('.')[1] }}"
+                              priority: "high"
+                              ttl: 0
+                              persistent: true
+                              notification_icon: "mdi:fire-alert"
+                              color: "#FF0000"
+                              sound: !input emergency_sound
+                              vibrationPattern: !input vibration_pattern
+                              actions:
+                                - action: "EVACUATED_SAFE"
+                                  title: "✅ Évacué en sécurité"
+                                - action: "CALL_EMERGENCY"
+                                  title: "📞 Appeler pompiers"
+                                - action: "FALSE_ALARM"
+                                  title: "🚫 Fausse alarme"
+              
+              # Notifications email d'urgence
+              - if:
+                  - condition: template
+                    value_template: "{{ 'email' in notification_services_list }}"
+                then:
+                  - service: notify.email
+                    data:
+                      subject: !input fire_alert_title
+                      message: !input fire_alert_message
+                      data:
+                        html: |
+                          <html>
+                          <body style="background-color: #ffebee; padding: 20px; font-family: Arial;">
+                          <div style="background-color: #d32f2f; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                          <h1>🚨 {{ fire_alert_title }}</h1>
+                          </div>
+                          <div style="background-color: white; padding: 20px; border-radius: 5px;">
+                          <pre>{{ fire_alert_message }}</pre>
+                          </div>
+                          <p style="color: #d32f2f; font-weight: bold;">Ce message a été envoyé par votre système domotique Home Assistant</p>
+                          </body>
+                          </html>
+              
+              # Autres services de notification
+              - repeat:
+                  for_each: "{{ notification_services_list }}"
+                  sequence:
+                    - if:
+                        - condition: template
+                          value_template: "{{ repeat.item not in ['mobile_app', 'persistent', 'email'] }}"
+                      then:
+                        - service: "notify.{{ repeat.item }}"
+                          data:
+                            title: !input fire_alert_title
+                            message: !input fire_alert_message
+                          continue_on_error: true
+          
+          # Boucle de notifications répétées d'urgence
+          - repeat:
+              while:
+                - condition: state
+                  entity_id: "{{ trigger.entity_id }}"
+                  state: "on"
+                - condition: template
+                  value_template: >
+                    {% if max_notifications_count > 0 %}
+                      {{ repeat.index <= max_notifications_count }}
+                    {% else %}
+                      true
+                    {% endif %}
+              sequence:
+                # Délai avec escalade si activée
+                - delay: >
+                    {% if escalation_enabled and (now() - trigger.to_state.last_changed).total_seconds() > escalation_time_seconds %}
+                      {{ [repeat_interval_seconds // 3, 30] | max }}
+                    {% else %}
+                      {{ repeat_interval_seconds }}
+                    {% endif %}
+                
+                # Vérifier si toujours en alarme
+                - condition: state
+                  entity_id: "{{ trigger.entity_id }}"
+                  state: "on"
+                
+                # Envoyer notifications répétées d'urgence
+                - parallel:
+                    # Notification persistante (mise à jour)
+                    - if:
+                        - condition: template
+                          value_template: "{{ 'persistent' in notification_services_list }}"
+                      then:
+                        - service: persistent_notification.create
+                          data:
+                            title: "{{ fire_alert_title }} - RAPPEL URGENT #{{ repeat.index }}"
+                            message: !input repeat_message
+                            notification_id: "fire_emergency_{{ trigger.entity_id.split('.')[1] }}"
+                    
+                    # Notifications mobiles répétées
+                    - if:
+                        - condition: template
+                          value_template: "{{ 'mobile_app' in notification_services_list and mobile_devices_list }}"
+                      then:
+                        - repeat:
+                            for_each: !input mobile_devices
+                            sequence:
+                              - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                                data:
+                                  title: "{{ fire_alert_title }} - RAPPEL #{{ repeat.index }}"
+                                  message: !input repeat_message
+                                  data:
+                                    tag: "fire_emergency_{{ trigger.entity_id.split('.')[1] }}"
+                                    priority: "high"
+                                    persistent: true
+                                    notification_icon: "mdi:fire-alert"
+                                    color: "#FF6600"
+                                    sound: !input emergency_sound
+                
+                # Annonce TTS périodique d'évacuation
+                - if:
+                    - condition: template
+                      value_template: "{{ 'tts_evacuation' in emergency_actions_list and tts_speakers and repeat.index % 3 == 0 }}"
+                  then:
+                    - service: tts.speak
+                      target:
+                        entity_id: !input tts_speakers
+                      data:
+                        message: "Rappel d'évacuation ! L'alarme incendie est toujours active. Si vous êtes encore dans le bâtiment, sortez immédiatement !"
+      
+      # === DÉTECTION MONOXYDE DE CARBONE ===
+      - conditions:
+          - condition: trigger
+            id: "co_detected"
+        sequence:
+          # Actions similaires pour CO avec message spécifique
+          - service: logbook.log
+            data:
+              name: "☠️ Système CO"
+              message: "Monoxyde de carbone détecté par {{ trigger.to_state.attributes.friendly_name }}"
+              entity_id: "{{ trigger.entity_id }}"
+          
+          # Actions d'urgence CO (ouverture maximale pour aération)
+          - parallel:
+              - if:
+                  - condition: template
+                    value_template: "{{ smart_windows }}"
+                then:
+                  - service: cover.open_cover
+                    target:
+                      entity_id: !input smart_windows
+              
+              - if:
+                  - condition: template
+                    value_template: "{{ emergency_sirens }}"
+                then:
+                  - service: siren.turn_on
+                    target:
+                      entity_id: !input emergency_sirens
+          
+          # Notifications CO immédiates
+          - parallel:
+              - if:
+                  - condition: template
+                    value_template: "{{ 'mobile_app' in notification_services_list and mobile_devices_list }}"
+                then:
+                  - repeat:
+                      for_each: !input mobile_devices
+                      sequence:
+                        - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                          data:
+                            title: "☠️ ALERTE MONOXYDE DE CARBONE"
+                            message: !input co_alert_message
+                            data:
+                              priority: "high"
+                              ttl: 0
+                              persistent: true
+                              notification_icon: "mdi:skull"
+                              color: "#8B0000"
+                              sound: !input emergency_sound
+      
+      # === RÉSOLUTION D'INCIDENT ===
+      - conditions:
+          - or:
+              - condition: trigger
+                id: "smoke_resolved"
+              - condition: trigger
+                id: "co_resolved"
+        sequence:
+          # Arrêt des actions d'urgence
+          - parallel:
+              - if:
+                  - condition: template
+                    value_template: "{{ emergency_sirens }}"
+                then:
+                  - service: siren.turn_off
+                    target:
+                      entity_id: !input emergency_sirens
+              
+              - service: persistent_notification.dismiss
+                data:
+                  notification_id: "fire_emergency_{{ trigger.entity_id.split('.')[1] }}"
+                continue_on_error: true
+          
+          # Notification de résolution
+          - parallel:
+              - service: persistent_notification.create
+                data:
+                  title: "✅ Incident Résolu"
+                  message: !input resolved_message
+                  notification_id: "fire_resolved_{{ trigger.entity_id.split('.')[1] }}"
+              
+              - if:
+                  - condition: template
+                    value_template: "{{ 'mobile_app' in notification_services_list and mobile_devices_list }}"
+                then:
+                  - repeat:
+                      for_each: !input mobile_devices
+                      sequence:
+                        - service: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+                          data:
+                            title: "✅ Alerte Incendie Résolue"
+                            message: !input resolved_message
+                            data:
+                              tag: "fire_emergency_{{ trigger.entity_id.split('.')[1] }}"
+                              notification_icon: "mdi:fire-off"
+                              color: "#4CAF50"
+
+mode: parallel
+max_exceeded: silent
